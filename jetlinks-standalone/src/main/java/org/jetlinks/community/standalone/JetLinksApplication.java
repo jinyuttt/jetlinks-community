@@ -19,19 +19,21 @@ import lombok.extern.slf4j.Slf4j;
 import org.hswebframework.web.authorization.basic.configuration.EnableAopAuthorize;
 import org.hswebframework.web.crud.annotation.EnableEasyormRepository;
 import org.hswebframework.web.logging.aop.EnableAccessLogger;
+import org.springframework.amqp.rabbit.annotation.EnableRabbit;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.cache.annotation.EnableCaching;
 
 
-@SpringBootApplication(scanBasePackages = "org.jetlinks.community", exclude = {
+@SpringBootApplication(scanBasePackages = {"org.jetlinks.community","cn.iot.things"}, exclude = {
     DataSourceAutoConfiguration.class
 })
 @EnableCaching
 @EnableEasyormRepository("org.jetlinks.community.**.entity")
 @EnableAopAuthorize
 @EnableAccessLogger
+@EnableRabbit
 @Slf4j
 public class JetLinksApplication {
 

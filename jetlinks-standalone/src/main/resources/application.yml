@@ -2,6 +2,13 @@ server:
     port: 8848
 
 spring:
+    rabbitmq:
+        host: 192.168.0.124
+        port: 5672
+        username: admin
+        password: admin
+        virtual-host: /
+
     profiles:
         active: default,dev,local
     application:
@@ -54,6 +61,9 @@ spring:
         connection-timeout: 15s
         username: ${ES_USERNAME:""}
         password: ${ES_PASSWORD:""}
+
+
+
 easyorm:
     default-schema: ${DB_SCHEMA:public} # 数据库默认的schema,mysql时则为数据库名.(注意大小写,请勿使用-等特殊字符)
     dialect: ${DB_DIALECT:postgres} #数据库方言
@@ -77,8 +87,6 @@ timescaledb:
                 interval: 30d
     things-data:
         enabled: true # 开启设备数据存储
-#        retention-policy: 30d # 保留策略,30天
-#        chunk-time-interval: 1d # 分区时间间隔,1天
 tdengine:
     enabled: false # 使用tdengine来存储设备数据
     database: jetlinks
@@ -322,3 +330,27 @@ trace:
         - "/java/DeviceMessageMeasurementProvider/incrementMessage"
 
 msgmq:  /device/**
+
+rldb:
+    enabled: true
+    shared-spring: true # 默认共享spring的连接
+    r2dbc:
+        url: r2dbc:postgresql://localhost:15432/jetlinks
+        username: postgres
+        password: 123456
+    #    r2dbc: # 这里仅支持timescaledb,请勿修改成其他数据库.
+    #        url: r2dbc:postgresql://localhost:15432/jetlinks
+    #        username: postgres
+    #        password: p@ssw0rd
+    schema: ${TIMESCALEDB_SCHEMA:${easyorm.default-schema}} # timescaledb的schema,默认public
+    time-series:
+        enabled: true
+        retention-policies:
+            # 设备会话统计，只保留30天
+            -   table: device_session_metric
+                interval: 30d
+                # 设备消息统计，只保留30天
+            -   table: device_metrics
+                interval: 30d
+    things-data:
+        enabled: true # 开启设备数据存储

@@ -217,6 +217,16 @@
                 </dependency>
             </dependencies>
         </profile>
+        <profile>
+            <id>OAuth2Service</id>
+            <dependencies>
+                <dependency>
+                    <groupId>cn.iot.server</groupId>
+                    <artifactId>OAuth2Service</artifactId>
+                    <version>1.0-SNAPSHOT</version>
+                </dependency>
+            </dependencies>
+        </profile>
     </profiles>
 
     <dependencies>

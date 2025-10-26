@@ -47,6 +47,5 @@ public class JetLinksAuthController {
       return userDetailService.queryUserDetail(queryParamEntity);
     }
 
-
 }
 

@@ -16,6 +16,9 @@ import reactor.core.publisher.Mono;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 内部注册
+ */
 @RestController
 @RequestMapping("/api/jetlinks-auth")
 public class JetLinksAuthController {

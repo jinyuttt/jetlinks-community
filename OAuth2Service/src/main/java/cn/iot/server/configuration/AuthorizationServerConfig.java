@@ -71,6 +71,14 @@ public class AuthorizationServerConfig {
             .authorizeHttpRequests(authorize ->
                                        authorize
                                            .requestMatchers("/actuator/health", "/public/**").permitAll()
+
+                                           .requestMatchers("/api/public/**").permitAll() // 匹配 /api/public/ 开头的所有请求
+                                           .requestMatchers("/auth/login", "/auth/register").permitAll() // 匹配特定登录注册接口
+                                           .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll() // 允许Swagger文
+                                           .requestMatchers("/swagger-resources/**").permitAll()
+                                           .requestMatchers("/swagger-ui.html").permitAll()
+                                           .requestMatchers("/v2/api-docs").permitAll()
+                                           .requestMatchers("/api/jetlinks-auth/**").permitAll()
                                            .anyRequest().authenticated()
             )
             .formLogin(form ->

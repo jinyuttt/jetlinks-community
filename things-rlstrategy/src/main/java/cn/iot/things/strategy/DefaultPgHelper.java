@@ -24,9 +24,15 @@ import reactor.core.Disposables;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 
@@ -44,9 +50,15 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
 
     private DatabaseClient databaseClient=null;
 
-    Map<String,String> map=new HashMap<>();
+    Map<String,String> map=new HashMap<>();//数据库类型
 
-    public DefaultPgHelper(PgProperties properties) {
+    ConcurrentHashMap<String,List<String>> mapBuf=new ConcurrentHashMap<>();
+
+    ConcurrentHashMap<String,List<String>> mapColmunIndex =new ConcurrentHashMap<>();
+
+    private SimpleDateFormat sdf=new SimpleDateFormat("yyyyMMddHmm");
+
+   public DefaultPgHelper(PgProperties properties) {
         this.properties = properties;
     }
 
@@ -74,6 +86,39 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
            map.put("double","decimal");
            map.put("geoPoint","point");
            map.put("date","bigint");
+    }
+
+
+    private void process(){
+        Thread ss=new Thread(()->{
+           if(!mapColmunIndex.isEmpty()){
+               //
+               if(!mapBuf.isEmpty()) {
+                   //
+                   if (properties.isBatch()) {
+                       //批量入库
+                       for (Map.Entry<String, List<String>> entry : mapBuf.entrySet()) {
+                           StringBuffer sql = new StringBuffer();
+                           sql.append("insert into ").append(entry.getKey()).append(" (");
+                           List<String> list = mapColmunIndex.get(entry.getKey());
+                           sql.append(String.join(",", list));
+                           sql.append(") values ");
+                           sql.append(String.join(",", entry.getValue()));
+                           entry.getValue().clear();
+                           databaseClient.sql(sql.toString()).fetch().rowsUpdated().block();
+                       }
+
+
+                   }
+                   if (properties.isCsv()) {
+                       for (Map.Entry<String, List<String>> entry : mapBuf.entrySet()) {
+                           writeCsv(entry.getKey(), entry.getValue());
+                           entry.getValue().clear();
+                       }
+                   }
+               }
+           }
+        });
     }
 
     /**
@@ -119,6 +164,33 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
     }
 
 
+    /**
+     * 写入
+     * @param table
+     * @param data
+     * @return
+     */
+    private String writeCsv(String table,List<String> data) {
+        String d = sdf.format(new Date());
+        String dir = Paths.get(properties.getCsvdir(), d).toAbsolutePath().toString();
+        File file = new File(dir);
+        if (!file.exists()) {
+            file.mkdirs();
+        }
+        String filePath = Paths.get(dir, table + "_" + UUID.randomUUID().toString() + ".csv").toString();
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath))) {
+            StringBuilder sb = new StringBuilder();
+
+            for (String line : data) {
+                sb.append(line).append("\n");
+            }
+            writer.write(sb.toString());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return filePath;
+    }
+
 
     @Override
     public void run(String... args) throws Exception {
@@ -140,19 +212,17 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
         StringBuffer stringBuffer=new StringBuffer();
         String tableName=metric;
         stringBuilder.append("CREATE TABLE IF NOT EXISTS ");
-
         stringBuilder.append(tableName);
         stringBuilder.append(" (");
-       // stringBuilder.append("ID BIGINT PRIMARY KEY      NOT NULL,");
-        for (var propertyMetadata : collect) {
-//            if(propertyMetadata.getId().toLowerCase().equals("id")){
-//                continue;
-//            }
-            String colType=map.getOrDefault(propertyMetadata.getValueType().getType(),propertyMetadata.getValueType().getType());
 
+         List<String> lst=new ArrayList<>();
+        for (var propertyMetadata : collect) {
+            lst.add(propertyMetadata.getId());
+            String colType=map.getOrDefault(propertyMetadata.getValueType().getType(),propertyMetadata.getValueType().getType());
             stringBuilder.append(propertyMetadata.getId()).append(" ").append(colType).append(" ,");
             stringBuffer.append("COMMENT ON COLUMN").append(" "+tableName+".").append(propertyMetadata.getId()).append(" IS '").append(propertyMetadata.getName()).append("';");
         }
+        mapColmunIndex.put(tableName,lst);//保存表列顺序
         stringBuilder.deleteCharAt(stringBuilder.length()-1);
          stringBuilder.append(")");
         databaseClient.sql(stringBuilder.toString().toLowerCase()).then().block();
@@ -162,6 +232,59 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
 
     @Override
     public Mono<Void> doSave(String metric, TimeSeriesData data) {
+        if(properties.isBatch()){
+            //
+            if(mapColmunIndex.containsKey(metric)) {
+                List<String> list = mapColmunIndex.get(metric);
+                StringBuffer buffer = new StringBuffer();
+                buffer.append("(");
+                for (String col : list) {
+                    Object obj = data.getData().getOrDefault(col, null);
+                    buffer.append("'").append(obj).append("',");
+                }
+                buffer.deleteCharAt(buffer.length() - 1);
+                buffer.append(")");
+                List<String> bufData = mapBuf.getOrDefault(metric, null);
+                if (bufData != null) {
+                    bufData = new ArrayList<>();
+                    mapBuf.put(metric, bufData);
+                }
+                bufData.add(buffer.toString());
+
+                if(bufData.size()>properties.getBatchNum()){
+                    //批量入库
+                    StringBuffer sql=new StringBuffer();
+                    sql.append("insert into ").append(metric).append(" (");
+                    sql.append(String.join(",",list));
+                    sql.append(") values ");
+                    sql.append(String.join(",",bufData));
+                    bufData.clear();
+                    return databaseClient.sql(sql.toString().toLowerCase()).then();
+                }
+            }
+        }
+        if(properties.isCsv()){
+            if(mapColmunIndex.containsKey(metric)) {
+                List<String> list = mapColmunIndex.get(metric);
+                StringBuffer buffer = new StringBuffer();
+                for (String col : list) {
+                    Object obj = data.getData().getOrDefault(col, null);
+                    buffer.append(obj).append(",");
+                }
+                buffer.deleteCharAt(buffer.length() - 1);
+                List<String> bufData = mapBuf.getOrDefault(metric, null);
+                if (bufData != null) {
+                    bufData = new ArrayList<>();
+                    mapBuf.put(metric, bufData);
+                }
+                bufData.add(buffer.toString());
+                if(bufData.size()>properties.getBatchNum()){
+                    writeCsv(metric,bufData);
+                    bufData.clear();
+                }
+            }
+        }
+
         StringBuilder stringBuilder=new StringBuilder();
         stringBuilder.append("INSERT INTO ");
         stringBuilder.append(metric);

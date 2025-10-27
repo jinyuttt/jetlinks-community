@@ -12,6 +12,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class PgProperties {
     private boolean enabled = false;
 
+    private boolean batch=false;
+
+    private boolean csv=false;
+
+    private int batchNum=500;
+
+
+    private String csvdir="temp";
+
     //是否共享spring容器中的连接
     //需要平台也使用timescaledb
     private boolean sharedSpring = false;

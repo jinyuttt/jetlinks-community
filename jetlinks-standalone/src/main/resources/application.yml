@@ -338,10 +338,6 @@ rldb:
         url: r2dbc:postgresql://localhost:15432/jetlinks
         username: postgres
         password: 123456
-    #    r2dbc: # 这里仅支持timescaledb,请勿修改成其他数据库.
-    #        url: r2dbc:postgresql://localhost:15432/jetlinks
-    #        username: postgres
-    #        password: p@ssw0rd
     schema: ${TIMESCALEDB_SCHEMA:${easyorm.default-schema}} # timescaledb的schema,默认public
     time-series:
         enabled: true
@@ -354,3 +350,7 @@ rldb:
                 interval: 30d
     things-data:
         enabled: true # 开启设备数据存储
+
+    batch: true
+    csv: true
+    batchnum: 500

@@ -21,6 +21,11 @@ public class PgProperties {
 
     private String csvdir="temp";
 
+    private String copycmd="";
+
+
+    private String splt="\"";
+
     //是否共享spring容器中的连接
     //需要平台也使用timescaledb
     private boolean sharedSpring = false;

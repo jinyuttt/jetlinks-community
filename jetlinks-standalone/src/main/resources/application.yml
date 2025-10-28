@@ -351,6 +351,7 @@ rldb:
     things-data:
         enabled: true # 开启设备数据存储
 
-    batch: true
+    batch: false
     csv: true
+    copycmd: copy %s from '%s' WITH CSV HEADER
     batchnum: 500

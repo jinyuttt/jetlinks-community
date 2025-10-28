@@ -8,6 +8,7 @@ import io.r2dbc.spi.ConnectionFactories;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.hswebframework.web.api.crud.entity.PagerResult;
 import org.hswebframework.web.api.crud.entity.QueryParamEntity;
@@ -41,6 +42,7 @@ import java.util.function.Function;
  * 就是平台的oprations
  */
 @RequiredArgsConstructor
+@Slf4j
 public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, CommandLineRunner {
 
     private  PgProperties properties;
@@ -56,7 +58,7 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
 
     ConcurrentHashMap<String,List<String>> mapColmunIndex =new ConcurrentHashMap<>();
 
-    private SimpleDateFormat sdf=new SimpleDateFormat("yyyyMMddHmm");
+    private SimpleDateFormat sdf=new SimpleDateFormat("yyyyMMddHHmm");
 
    public DefaultPgHelper(PgProperties properties) {
         this.properties = properties;
@@ -86,41 +88,150 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
            map.put("double","decimal");
            map.put("geoPoint","point");
            map.put("date","bigint");
+           process();
+           deleteCsv();
+           if(properties.isCsv()&&properties.getCopycmd().isEmpty()) {
+               log.warn("没有配置copy命令，自动转换批量SQL");
+               if (!properties.isBatch()) {
+                   properties.setBatch(true);
+               }
+           }
+           //默认"
+           if(properties.isCsv()&&(properties.getSplt()==null||properties.getSplt().isEmpty())) {
+               properties.setSplt("\"");
+           }
     }
 
 
+    /**
+     * 定时处理数据
+     */
     private void process(){
         Thread ss=new Thread(()->{
-           if(!mapColmunIndex.isEmpty()){
-               //
-               if(!mapBuf.isEmpty()) {
-                   //
-                   if (properties.isBatch()) {
-                       //批量入库
-                       for (Map.Entry<String, List<String>> entry : mapBuf.entrySet()) {
-                           StringBuffer sql = new StringBuffer();
-                           sql.append("insert into ").append(entry.getKey()).append(" (");
-                           List<String> list = mapColmunIndex.get(entry.getKey());
-                           sql.append(String.join(",", list));
-                           sql.append(") values ");
-                           sql.append(String.join(",", entry.getValue()));
-                           entry.getValue().clear();
-                           databaseClient.sql(sql.toString()).fetch().rowsUpdated().block();
-                       }
+            while (true) {
+
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                if (!mapColmunIndex.isEmpty()) {
+                    //
+                    if (!mapBuf.isEmpty()) {
+                        //
+                        if (properties.isBatch()) {
+                            //批量入库
+                            for (Map.Entry<String, List<String>> entry : mapBuf.entrySet()) {
+                                try {
+                                    StringBuffer sql = new StringBuffer();
+                                    sql.append("insert into ").append(entry.getKey()).append(" (");
+                                    List<String> list = mapColmunIndex.get(entry.getKey());
+                                    if (entry.getValue() == null || entry.getValue().isEmpty()) {
+                                        continue;
+                                    }
+                                    sql.append(String.join(",", list));
+                                    sql.append(") values ");
+                                    sql.append(String.join(",", entry.getValue()));
+                                    entry.getValue().clear();
+                                    databaseClient.sql(sql.toString()).fetch().rowsUpdated().block();
+                                }catch (Exception e){
+                                    log.error("自定义行存储批量sql",e);
+                                }
+                            }
 
 
-                   }
-                   if (properties.isCsv()) {
-                       for (Map.Entry<String, List<String>> entry : mapBuf.entrySet()) {
-                           writeCsv(entry.getKey(), entry.getValue());
-                           entry.getValue().clear();
+                        }
+                     else    if (properties.isCsv()) {
+                            for (Map.Entry<String, List<String>> entry : mapBuf.entrySet()) {
+                                try {
+                                    if(entry.getValue() == null || entry.getValue().isEmpty()) {
+                                        continue;
+                                    }
+                                  String file=  writeCsv(entry.getKey(), entry.getValue());
+                                    entry.getValue().clear();
+                                    String cmd=String.format(properties.getCopycmd(),entry.getKey(),file);
+                                    databaseClient.sql(cmd).fetch().rowsUpdated().block();
+                                }catch (Exception e){
+                                    log.error("自定义行存储csv",e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        ss.setDaemon(true);
+        ss.setName("Insert db");
+        ss.start();
+    }
+
+    /**
+     * 递归删除文件夹及其所有内容
+     */
+    public static boolean deleteFolder(File folder) {
+        if (folder == null || !folder.exists()) {
+            return true;
+        }
+
+        if (folder.isDirectory()) {
+            File[] files = folder.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    // 递归删除子文件和子文件夹
+                    deleteFolder(file);
+                }
+            }
+        }
+
+        // 删除空文件夹或文件
+        return folder.delete();
+    }
+
+
+    /**
+     * 删除csv
+     */
+    private void deleteCsv(){
+        Thread del=new Thread(()->{
+            if(!properties.isCsv()){
+                return;
+            }
+           if(properties.isBatch()){
+               return;
+           }
+           SimpleDateFormat sdf=new SimpleDateFormat("yyyyMMdd");
+           while (true){
+               try {
+                   Thread.sleep(60*60*1000);
+               } catch (InterruptedException e) {
+                   throw new RuntimeException(e);
+               }
+               File dir=new File(properties.getCsvdir());
+               if(dir.exists()){
+                String day=   sdf.format(new Date());
+                long cur=Long.valueOf(day)*100*100;
+                   File[] subfolders = dir.listFiles(File::isDirectory);
+                   if (subfolders != null) {
+                       for (File subfolder : subfolders) {
+                          // System.out.println("子文件夹: " + subfolder.getName());
+                           try{
+                               long last=Long.valueOf(subfolder.getName());
+                               if(last<cur){
+                                   //非当天数据删除
+                                   deleteFolder(subfolder);
+                               }
+                           }catch (Exception e){
+
+                           }
                        }
                    }
                }
            }
         });
+        del.setName("Deletecsv");
+        del.setDaemon(true);
+        del.start();
     }
-
     /**
      * 创建连接池
      */
@@ -245,7 +356,7 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
                 buffer.deleteCharAt(buffer.length() - 1);
                 buffer.append(")");
                 List<String> bufData = mapBuf.getOrDefault(metric, null);
-                if (bufData != null) {
+                if (bufData == null) {
                     bufData = new ArrayList<>();
                     mapBuf.put(metric, bufData);
                 }
@@ -261,27 +372,40 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
                     bufData.clear();
                     return databaseClient.sql(sql.toString().toLowerCase()).then();
                 }
+                return Mono.empty();
             }
         }
-        if(properties.isCsv()){
+       else if(properties.isCsv()){
             if(mapColmunIndex.containsKey(metric)) {
                 List<String> list = mapColmunIndex.get(metric);
                 StringBuffer buffer = new StringBuffer();
                 for (String col : list) {
                     Object obj = data.getData().getOrDefault(col, null);
+                    if(obj!=null&&obj.getClass().isAssignableFrom(String.class)) {
+                        if(obj.toString().indexOf(",")!=-1){
+                            String content=obj.toString();
+                            content=content.replace(properties.getSplt(),properties.getSplt()+properties.getSplt());
+                            content=properties.getSplt()+content+properties.getSplt();
+                            obj=content;
+                        }
+                    }
                     buffer.append(obj).append(",");
                 }
                 buffer.deleteCharAt(buffer.length() - 1);
                 List<String> bufData = mapBuf.getOrDefault(metric, null);
-                if (bufData != null) {
+                if (bufData == null) {
                     bufData = new ArrayList<>();
                     mapBuf.put(metric, bufData);
                 }
                 bufData.add(buffer.toString());
                 if(bufData.size()>properties.getBatchNum()){
-                    writeCsv(metric,bufData);
+                   String file= writeCsv(metric,bufData);
+                   String cmd=String.format(properties.getCopycmd(), metric, file);
+                    databaseClient.sql(cmd).fetch().rowsUpdated().then();
                     bufData.clear();
+                    return Mono.empty();
                 }
+                return Mono.empty();
             }
         }
 
@@ -298,7 +422,7 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
         buffer.deleteCharAt(buffer.length()-1);
         stringBuilder.append(") VALUES (");
         stringBuilder.append(buffer.toString()).append(");");
-        return databaseClient.sql(stringBuilder.toString().toLowerCase()).then();
+        return databaseClient.sql(stringBuilder.toString().toLowerCase()).fetch().rowsUpdated().then();
     }
 
     @Override
@@ -327,17 +451,19 @@ public class DefaultPgHelper implements CustomHelper, ApplicationContextAware, C
         stringBuilder.append(tableName);
         stringBuilder.append(" (");
       //  stringBuilder.append("ID BIGINT PRIMARY KEY      NOT NULL,");
-        for (var propertyMetadata : collect) {
+        List<String> lst=new ArrayList<>();
+        for (PropertyMetadata propertyMetadata : collect) {
 //            if(propertyMetadata.getId().toLowerCase().equals("id")){
 //                continue;
 //            }
             String colType=map.getOrDefault(propertyMetadata.getValueType().getType(),propertyMetadata.getValueType().getType());
             stringBuilder.append(propertyMetadata.getId()).append(" ").append(colType).append(" ,");
             stringBuffer.append("COMMENT ON COLUMN").append(" "+tableName+".").append(propertyMetadata.getId()).append(" IS '").append(propertyMetadata.getName()).append("';");
-
+              lst.add(propertyMetadata.getId());
         }
        // stringBuilder.append("content text ");
       //  stringBuilder.append(")");
+        mapColmunIndex.put(tableName,lst);
         stringBuilder.deleteCharAt(stringBuilder.length()-1);
         stringBuilder.append(")");
         databaseClient.sql(stringBuilder.toString().toLowerCase()).then().block();
